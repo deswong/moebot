@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.env
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# TinyTuya / Local Data (if generated)
+tuya-raw.json
+devices.json
+snapshot.json
+tinytuya.json
+.tuyapierror
+
+# OS
+.DS_Store
+Thumbs.db
