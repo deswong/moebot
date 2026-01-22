@@ -1,6 +1,21 @@
+# /// script
+# requires-python = ">=3.12"
+#     "tinytuya",
+#     "pymoebot",
+#     "paho-mqtt",
+#     "python-dotenv",
+# ]
+# ///
+
+
 from moebot_client import MoeBotClient as MoeBot
 
 import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Suppress pymoebot and tinytuya debug/info logging during startup
 logging.getLogger("pymoebot").setLevel(logging.CRITICAL)
@@ -14,18 +29,20 @@ logging.basicConfig(
 )
 
 # MoeBot Configuration
-# REPLACE THESE WITH YOUR DEVICE DETAILS
-DEVICE_ID = "YOUR_DEVICE_ID"          # e.g., "bf9744..."
-DEVICE_IP = "YOUR_DEVICE_IP"          # e.g., "192.168.1.100"
-LOCAL_KEY = "YOUR_LOCAL_KEY"          # e.g., "e2_y!..."
+DEVICE_ID = os.getenv("DEVICE_ID")
+DEVICE_IP = os.getenv("DEVICE_IP")
+LOCAL_KEY = os.getenv("LOCAL_KEY")
 
 # MQTT Configuration
-# REPLACE THESE WITH YOUR MQTT BROKER DETAILS
-MQTT_HOST = "YOUR_MQTT_BROKER_IP"     # e.g., "192.168.1.50" or "openhab.local"
-MQTT_PORT = 1883                      # Default MQTT port
-MQTT_USERNAME = "YOUR_MQTT_USERNAME"  # Leave as None or "" if not required
-MQTT_PASSWORD = "YOUR_MQTT_PASSWORD"  # Leave as None or "" if not required
-MQTT_TOPIC = "moebot"                 # Base topic for MQTT messages
+MQTT_HOST = os.getenv("MQTT_HOST")
+# Default to 1883 if not specified
+MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
+MQTT_USERNAME = os.getenv("MQTT_USERNAME")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "moebot")
+
+if not all([DEVICE_ID, DEVICE_IP, LOCAL_KEY, MQTT_HOST]):
+    logging.warning("Missing configuration! Please copy .env.example to .env and fill in your details.")
 
 def query_status():
     """Query the MoeBot's current status (polling method)"""

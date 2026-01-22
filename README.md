@@ -20,28 +20,32 @@ It is designed to be lightweight, robust, and run entirely locally without relyi
 
 ## Installation
 
-### Prerequisites
+### Option 1: Modern Setup (using `uv`) - Recommended
 
-- Python 3.7+
-- A MoeBot robotic mower (configured on your WiFi)
-- An MQTT Broker (Mosquitto, etc.)
+This project uses `uv` for fast dependency management.
 
-### Setup
-
-1.  **Clone the repository**:
+1.  **Install `uv`** (if not installed):
     ```bash
-    git clone https://github.com/yourusername/moebot-mqtt.git
-    cd moebot-mqtt
+    curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
 
-2.  **Create a Virtual Environment** (Recommended):
+2.  **Run with `uv`**:
+    You don't need to manually create a virtual environment. `uv` handles it by reading the dependencies directly from `main.py`.
+    ```bash
+    uv run main.py
+    ```
+    This will automatically install dependencies and run the script.
+
+### Option 2: Traditional Setup (pip)
+
+1.  **Create a Virtual Environment**:
     ```bash
     python3 -m venv venv
     source venv/bin/activate  # on Linux/Mac
     # venv\Scripts\activate  # on Windows
     ```
 
-3.  **Install Dependencies**:
+2.  **Install Dependencies**:
     ```bash
     pip install -r requirements.txt
     ```
@@ -154,7 +158,10 @@ To keep the bridge running in the background, you should set it up as a system s
     Type=simple
     User=your_user
     WorkingDirectory=/path/to/moebot-mqtt
+    # Option 1: Using pip/venv
     ExecStart=/path/to/moebot-mqtt/venv/bin/python3 main.py mqtt
+    # Option 2: Using uv (path to .venv created by 'uv sync' or 'uv run')
+    # ExecStart=/path/to/moebot-mqtt/.venv/bin/python3 main.py mqtt
     Restart=always
     RestartSec=10
 
