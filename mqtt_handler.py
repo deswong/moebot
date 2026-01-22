@@ -299,6 +299,9 @@ class MoeBotMQTT:
         finally:
             sys.stderr.close()
             sys.stderr = save_stderr
+        
+        # Log success explicitly now that stderr is restored
+        _log.info(f"Successfully connected to MoeBot at {self.device_ip}")
 
     def _disconnect_moebot(self):
         """Disconnect from MoeBot"""
