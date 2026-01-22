@@ -310,6 +310,9 @@ class MoeBotMQTT:
                 _log.error(f"Error disconnecting MoeBot: {e}")
             finally:
                 self.moebot = None
+                # Explicitly call garbage collector to free up resources
+                import gc
+                gc.collect()
 
     def _restart_moebot(self):
         """Restart MoeBot connection"""
@@ -335,9 +338,14 @@ class MoeBotMQTT:
         """Watchdog loop to monitor connection health"""
         _log.info("Supervisor watchdog started")
         import time
+        import gc
+        
+        last_gc_time = time.time()
         
         while self.running and not self._supervisor_stop_event.is_set():
             try:
+                current_time = time.time()
+                
                 # Check 0: Not connected at all?
                 if self.moebot is None:
                      _log.warning("Watchdog: MoeBot not connected. Attempting to connect...")
@@ -359,15 +367,17 @@ class MoeBotMQTT:
                     last_update = self.moebot.last_update
                     # last_update is a timestamp or None
                     if last_update:
-                        time_since_update = time.time() - last_update
+                        time_since_update = current_time - last_update
                         if time_since_update > 60:
                              _log.warning(f"Watchdog: No updates for {int(time_since_update)}s. Restarting...")
                              self._restart_moebot()
                              continue
-                    else:
-                        # If updates are None, it might be initial startup
-                        # We could add a check for "connected time" here but simple is fine for now
-                        pass
+                
+                # Maintenance: Periodic GC every 15 minutes
+                if current_time - last_gc_time > 900:
+                    _log.debug("Running periodic garbage collection...")
+                    gc.collect()
+                    last_gc_time = current_time
                 
                 time.sleep(10)
                 
