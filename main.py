@@ -1,11 +1,3 @@
-# /// script
-# requires-python = ">=3.12"
-#     "tinytuya",
-#     "pymoebot",
-#     "paho-mqtt",
-#     "python-dotenv",
-# ]
-# ///
 
 
 from moebot_client import MoeBotClient as MoeBot
