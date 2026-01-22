@@ -1,0 +1,12 @@
+[project]
+name = "moebot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "paho-mqtt>=2.1.0",
+    "pymoebot>=0.3.1",
+    "python-dotenv>=1.2.1",
+    "tinytuya>=1.17.4",
+]

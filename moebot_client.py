@@ -155,3 +155,15 @@ class MoeBotClient(PyMoeBot):
         except Exception as e:
             _log.error(f"Error getting password: {e}")
         return {"numeric": None, "letter": ""}
+
+    @property
+    def is_listener_alive(self) -> bool:
+        """Check if the internal listener thread is alive"""
+        try:
+            # Access private attribute from parent class
+            thread = getattr(self, "_MoeBot__thread", None)
+            if thread and thread.is_alive():
+                return True
+        except Exception:
+            pass
+        return False

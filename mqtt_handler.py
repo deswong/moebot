@@ -219,64 +219,188 @@ class MoeBotMQTT:
         except Exception as e:
             _log.error(f"Error publishing stats: {e}")
     
+    
     def start(self):
         """Start MQTT bridge - connect and listen"""
         try:
             _log.info("Starting MoeBot MQTT bridge")
             
-            # Suppress stderr for the entire initialization process
-            save_stderr = sys.stderr
-            sys.stderr = open(os.devnull, 'w')
+            # Initialize MQTT client
+            self.mqtt_client = mqtt.Client()
+            self.mqtt_client.on_connect = self._on_mqtt_connect
+            self.mqtt_client.on_message = self._on_mqtt_message
             
+            # Set credentials if provided
+            if self.mqtt_username and self.mqtt_password:
+                self.mqtt_client.username_pw_set(self.mqtt_username, self.mqtt_password)
+            
+            # Connect to MQTT broker with retry
+            _log.info(f"Connecting to MQTT broker at {self.mqtt_host}:{self.mqtt_port}")
+            import time
+            while True:
+                try:
+                    self.mqtt_client.connect(self.mqtt_host, self.mqtt_port, keepalive=120)
+                    break
+                except Exception as e:
+                    _log.warning(f"MQTT connection failed: {e}. Retrying in 5s...")
+                    time.sleep(5)
+
+            self.mqtt_client.loop_start()
+            
+            # Connect to MoeBot (try once, but don't fail)
             try:
-                # Initialize MoeBot Client
-                self.moebot = MoeBotClient(self.device_id, self.device_ip, self.local_key)
-                self.moebot.add_listener(self._on_moebot_update)
-                
-                # Initialize MQTT client
-                self.mqtt_client = mqtt.Client()
-                self.mqtt_client.on_connect = self._on_mqtt_connect
-                self.mqtt_client.on_message = self._on_mqtt_message
-                
-                # Set credentials if provided
-                if self.mqtt_username and self.mqtt_password:
-                    self.mqtt_client.username_pw_set(self.mqtt_username, self.mqtt_password)
-                
-                # Connect to MQTT broker
-                _log.info(f"Connecting to MQTT broker at {self.mqtt_host}:{self.mqtt_port}")
-                self.mqtt_client.connect(self.mqtt_host, self.mqtt_port, keepalive=120)
-                
-                # Start MQTT client loop in background
-                self.mqtt_client.loop_start()
-                
-                # Start MoeBot listener
-                _log.info("Starting MoeBot listener")
-                self.moebot.listen()
-                
-            finally:
-                # Restore stderr
-                sys.stderr.close()
-                sys.stderr = save_stderr
+                self._connect_moebot()
+            except Exception as e:
+                _log.error(f"Initial MoeBot connection failed: {e}. Supervisor will retry.")
+                self.moebot = None
+            
+            # Start supervisor
+            self.running = True
+            self._start_supervisor()
+            
+            _log.info("MoeBot MQTT bridge started successfully")
+            
+        except Exception as e:
+            _log.error(f"Error starting MQTT bridge: {e}")
+            self.stop()
+            raise
+
+    def _connect_moebot(self):
+        """Initialize and connect to MoeBot"""
+        _log.info("Connecting to MoeBot...")
+        
+        # Suppress stderr for initialization
+        save_stderr = sys.stderr
+        sys.stderr = open(os.devnull, 'w')
+        
+        try:
+            # Initialize MoeBot Client
+            self.moebot = MoeBotClient(self.device_id, self.device_ip, self.local_key)
+            self.moebot.add_listener(self._on_moebot_update)
+            
+            # Start MoeBot listener
+            _log.info("Starting MoeBot listener")
+            self.moebot.listen()
             
             # Publish initial status
             self.moebot.poll()
             self._publish_all_stats()
             
-            self.running = True
-            _log.info("MoeBot MQTT bridge started successfully")
-            
         except Exception as e:
-            _log.error(f"Error starting MQTT bridge: {e}")
+            # Clean up if partial initialization happened
+            if hasattr(self, 'moebot') and self.moebot:
+                try: 
+                     self.moebot.unlisten() 
+                except: pass
+                self.moebot = None
+                
+            _log.error(f"Failed to connect to MoeBot: {e}")
             raise
-    
+        finally:
+            sys.stderr.close()
+            sys.stderr = save_stderr
+        
+        # Log success explicitly now that stderr is restored
+        _log.info(f"Successfully connected to MoeBot at {self.device_ip}")
+
+    def _disconnect_moebot(self):
+        """Disconnect from MoeBot"""
+        if self.moebot:
+            try:
+                _log.info("Disconnecting from MoeBot...")
+                self.moebot.unlisten()
+            except Exception as e:
+                _log.error(f"Error disconnecting MoeBot: {e}")
+            finally:
+                self.moebot = None
+                # Explicitly call garbage collector to free up resources
+                import gc
+                gc.collect()
+
+    def _restart_moebot(self):
+        """Restart MoeBot connection"""
+        _log.warning("Restarting MoeBot connection...")
+        self._disconnect_moebot()
+        import time
+        time.sleep(2) # Give it a moment to clear sockets
+        try:
+            self._connect_moebot()
+            _log.info("MoeBot connection restarted successfully")
+        except Exception as e:
+            _log.error(f"Failed to restart MoeBot connection: {e}")
+
+    def _start_supervisor(self):
+        """Start the supervisor thread"""
+        import threading
+        self._supervisor_stop_event = threading.Event()
+        self._supervisor_thread = threading.Thread(target=self._supervisor_loop, name="SupervisorFromMqttHandler")
+        self._supervisor_thread.daemon = True
+        self._supervisor_thread.start()
+
+    def _supervisor_loop(self):
+        """Watchdog loop to monitor connection health"""
+        _log.info("Supervisor watchdog started")
+        import time
+        import gc
+        
+        last_gc_time = time.time()
+        
+        while self.running and not self._supervisor_stop_event.is_set():
+            try:
+                current_time = time.time()
+                
+                # Check 0: Not connected at all?
+                if self.moebot is None:
+                     _log.warning("Watchdog: MoeBot not connected. Attempting to connect...")
+                     self._restart_moebot()
+                     time.sleep(10) # Wait a bit after restart attempt
+                     continue
+
+                # Check 1: Listener Thread Health
+                if self.moebot:
+                    thread_alive = self.moebot.is_listener_alive
+                    if not thread_alive:
+                        _log.warning("Watchdog: Listener thread is dead. Restarting...")
+                        self._restart_moebot()
+                        continue
+                
+                # Check 2: Stale Data (Last Update > 60s)
+                # Only check if we have a moebot instance
+                if self.moebot:
+                    last_update = self.moebot.last_update
+                    # last_update is a timestamp or None
+                    if last_update:
+                        time_since_update = current_time - last_update
+                        if time_since_update > 60:
+                             _log.warning(f"Watchdog: No updates for {int(time_since_update)}s. Restarting...")
+                             self._restart_moebot()
+                             continue
+                
+                # Maintenance: Periodic GC every 15 minutes
+                if current_time - last_gc_time > 900:
+                    _log.debug("Running periodic garbage collection...")
+                    gc.collect()
+                    last_gc_time = current_time
+                
+                time.sleep(10)
+                
+            except Exception as e:
+                _log.error(f"Error in supervisor loop: {e}")
+                time.sleep(5)
+
     def stop(self):
         """Stop MQTT bridge"""
         try:
             _log.info("Stopping MoeBot MQTT bridge")
             self.running = False
             
-            if self.moebot:
-                self.moebot.unlisten()
+            # Stop supervisor
+            if hasattr(self, '_supervisor_stop_event'):
+                self._supervisor_stop_event.set()
+            if hasattr(self, '_supervisor_thread'):
+                self._supervisor_thread.join(timeout=2.0)
+
+            self._disconnect_moebot()
             
             if self.mqtt_client:
                 self.mqtt_client.loop_stop()
@@ -295,18 +419,20 @@ if __name__ == "__main__":
         level=logging.INFO
     )
     
-    # Configuration
-    # REPLACE WITH YOUR DEVICE DETAILS
-    DEVICE_ID = "YOUR_DEVICE_ID"
-    DEVICE_IP = "YOUR_DEVICE_IP"
-    LOCAL_KEY = "YOUR_LOCAL_KEY"
+    # Load env vars for standalone testing
+    from dotenv import load_dotenv
+    load_dotenv()
     
-    # REPLACE WITH YOUR MQTT BROKER DETAILS
-    MQTT_HOST = "YOUR_MQTT_BROKER_IP"
-    MQTT_PORT = 1883
-    MQTT_USERNAME = "YOUR_MQTT_USERNAME"  # Leave empty if not required
-    MQTT_PASSWORD = "YOUR_MQTT_PASSWORD"  # Leave empty if not required
-    MQTT_TOPIC = "moebot"
+    # Configuration
+    DEVICE_ID = os.getenv("DEVICE_ID", "YOUR_DEVICE_ID")
+    DEVICE_IP = os.getenv("DEVICE_IP", "YOUR_DEVICE_IP")
+    LOCAL_KEY = os.getenv("LOCAL_KEY", "YOUR_LOCAL_KEY")
+    
+    MQTT_HOST = os.getenv("MQTT_HOST", "YOUR_MQTT_BROKER_IP")
+    MQTT_PORT = int(os.getenv("MQTT_PORT", 1883))
+    MQTT_USERNAME = os.getenv("MQTT_USERNAME")
+    MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
+    MQTT_TOPIC = os.getenv("MQTT_TOPIC", "moebot")
     
     # Create and start bridge
     bridge = MoeBotMQTT(
